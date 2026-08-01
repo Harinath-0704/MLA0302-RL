@@ -1,170 +1,135 @@
-import gymnasium as gym
-from gymnasium import spaces
-import numpy as np
+import pandas as pd
 import random
+from collections import deque
+from google.colab import files
+print('Upload the 5x5 grid CSV file')
+uploaded = files.upload()
 
-class CleaningRobotEnv(gym.Env):
+file_path = list(uploaded.keys())[0]
 
-    def __init__(self):
-        super().__init__()
+grid = pd.read_csv(file_path, header=None).values.tolist()
 
-        self.size = 5
+ROWS = len(grid)
+COLS = len(grid[0])
 
-        # Actions: 0=Up, 1=Down, 2=Left, 3=Right
-        self.action_space = spaces.Discrete(4)
+REWARDS = {
+    'D': 1,   # Dirt
+    'O': -1,  # Obstacle
+    'E': 0,   # Empty
+    'S': 0    # Start
+}
 
-        # Observation = Robot Position (row, col)
-        self.observation_space = spaces.Box(
-            low=0,
-            high=4,
-            shape=(2,),
-            dtype=np.int32
-        )
-
-        self.initial_dirt = {(0,4), (2,2), (4,1)}
-        self.obstacles = {(1,1), (3,3), (4,4)}
-
-        self.reset()
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self.robot = [0,0]
-        self.dirt = self.initial_dirt.copy()
-        return np.array(self.robot), {}
-
-    def step(self, action):
-
-        x, y = self.robot
-
-        if action == 0:      # Up
-            x = max(0, x-1)
-
-        elif action == 1:    # Down
-            x = min(self.size-1, x+1)
-
-        elif action == 2:    # Left
-            y = max(0, y-1)
-
-        elif action == 3:    # Right
-            y = min(self.size-1, y+1)
-
-        self.robot = [x,y]
-
-        reward = 0
-
-        if (x,y) in self.obstacles:
-            reward = -1
-
-        if (x,y) in self.dirt:
-            reward = 1
-            self.dirt.remove((x,y))
-
-        done = len(self.dirt) == 0
-
-        return np.array(self.robot), reward, done, False, {}
-
-    def render(self):
-
-        grid = [["." for _ in range(self.size)] for _ in range(self.size)]
-
-        for d in self.dirt:
-            grid[d[0]][d[1]] = "D"
-
-        for o in self.obstacles:
-            grid[o[0]][o[1]] = "X"
-
-        x,y = self.robot
-        grid[x][y] = "R"
-
-        print()
-
-        for row in grid:
-            print(" ".join(row))
-
-        print("-"*20)
+# Find start position
+start = (0, 0)
+for i in range(ROWS):
+    for j in range(COLS):
+        if grid[i][j] == 'S':
+            start = (i, j)
 
 
-# --------------------------
+moves = [(-1,0), (1,0), (0,-1), (0,1)]
+
+def valid(x, y):
+    return 0 <= x < ROWS and 0 <= y < COLS
+
+def print_grid():
+    print('\\nGrid Environment')
+    for row in grid:
+        print(' '.join(row))
+    print()
+
+print_grid()
+
+# -----------------------------
 # Random Policy
-# --------------------------
+# -----------------------------
+def random_policy(max_steps=50):
+    pos = start
+    score = 0
+    cleaned = set()
 
-print("\n===== RANDOM POLICY =====")
+    print('--- Random Policy ---')
+    print('Start:', pos)
 
-env = CleaningRobotEnv()
+    for step in range(max_steps):
+        dx, dy = random.choice(moves)
+        nx, ny = pos[0] + dx, pos[1] + dy
 
-state, info = env.reset()
+        if not valid(nx, ny):
+            continue
 
-total_reward = 0
+        pos = (nx, ny)
+        cell = grid[nx][ny]
 
-for i in range(30):
+        if cell == 'D' and pos not in cleaned:
+            score += 1
+            cleaned.add(pos)
+        elif cell == 'O':
+            score -= 1
 
-    env.render()
+        print(f'Step {step+1}: {pos} -> {cell} | Score = {score}')
 
-    action = env.action_space.sample()
+        if len(cleaned) == sum(row.count('D') for row in grid):
+            print('All dirt cleaned!')
+            break
 
-    state, reward, done, truncated, info = env.step(action)
+    print('Final Score:', score)
+    print()
 
-    total_reward += reward
+# -----------------------------
+# Greedy Policy (nearest dirt)
+# -----------------------------
+def nearest_dirt(position, cleaned):
+    q = deque([(position, [])])
+    visited = {position}
 
-    print("Action:", action,
-          "State:", state,
-          "Reward:", reward)
+    while q:
+        (x, y), path = q.popleft()
 
-    if done:
-        print("All Dirt Cleaned!")
-        break
+        if grid[x][y] == 'D' and (x, y) not in cleaned:
+            return path
 
-print("Total Reward:", total_reward)
+        for dx, dy in moves:
+            nx, ny = x + dx, y + dy
+            if valid(nx, ny) and (nx, ny) not in visited:
+                visited.add((nx, ny))
+                q.append(((nx, ny), path + [(nx, ny)]))
 
-env.close()
+    return []
 
+def greedy_policy():
+    pos = start
+    score = 0
+    cleaned = set()
 
-# --------------------------
-# Greedy Policy
-# --------------------------
+    print('--- Greedy Policy ---')
+    print('Start:', pos)
 
-print("\n===== GREEDY POLICY =====")
+    step = 0
+    total_dirt = sum(row.count('D') for row in grid)
 
-env = CleaningRobotEnv()
+    while len(cleaned) < total_dirt:
+        path = nearest_dirt(pos, cleaned)
 
-state, info = env.reset()
+        if not path:
+            break
 
-total_reward = 0
+        for next_pos in path:
+            step += 1
+            pos = next_pos
+            cell = grid[pos[0]][pos[1]]
 
-while True:
+            if cell == 'D' and pos not in cleaned:
+                score += 1
+                cleaned.add(pos)
+            elif cell == 'O':
+                score -= 1
 
-    env.render()
+            print(f'Step {step}: {pos} -> {cell} | Score = {score}')
 
-    if len(env.dirt) == 0:
-        break
+    print('All reachable dirt cleaned!')
+    print('Final Score:', score)
+    print()
 
-    x,y = env.robot
-
-    nearest = min(
-        env.dirt,
-        key=lambda d: abs(d[0]-x)+abs(d[1]-y)
-    )
-
-    dx = nearest[0]-x
-    dy = nearest[1]-y
-
-    if abs(dx) > abs(dy):
-        action = 1 if dx>0 else 0
-    else:
-        action = 3 if dy>0 else 2
-
-    state, reward, done, truncated, info = env.step(action)
-
-    total_reward += reward
-
-    print("Action:", action,
-          "State:", state,
-          "Reward:", reward)
-
-    if done:
-        print("All Dirt Cleaned!")
-        break
-
-print("Total Reward:", total_reward)
-
-env.close()
+random_policy()
+greedy_policy()
