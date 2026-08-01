@@ -1,162 +1,114 @@
-import gymnasium as gym
+import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
+from google.colab import files
 
 # -----------------------------
-# Delivery Drone Environment
+# Upload CSV file
 # -----------------------------
-class DeliveryDroneEnv(gym.Env):
-    def __init__(self):
-        super().__init__()
+print('Upload the delivery_drone_grid.csv file')
+uploaded = files.upload()
 
-        self.grid_size = 5
+file_name = list(uploaded.keys())[0]
+grid = pd.read_csv(file_name, header=None).values
 
-        # Warehouse (Start)
-        self.start = (0, 0)
+rows, cols = grid.shape
 
-        # Delivery points (Rewards)
-        self.goals = [(4, 4), (2, 3)]
+# Rewards
+rewards = {'S': 0, 'E': -1, 'D': 5, 'G': 10, 'O': -5}
 
-        self.state = self.start
-
-        # Actions
-        # 0 = Up, 1 = Down, 2 = Left, 3 = Right
-        self.action_space = gym.spaces.Discrete(4)
-        self.observation_space = gym.spaces.Discrete(self.grid_size * self.grid_size)
-
-    def state_to_index(self, state):
-        return state[0] * self.grid_size + state[1]
-
-    def index_to_state(self, index):
-        return (index // self.grid_size, index % self.grid_size)
-
-    def reset(self, seed=None, options=None):
-        self.state = self.start
-        return self.state_to_index(self.state), {}
-
-    def step(self, action):
-
-        r, c = self.state
-
-        if action == 0:      # Up
-            r = max(0, r - 1)
-        elif action == 1:    # Down
-            r = min(self.grid_size - 1, r + 1)
-        elif action == 2:    # Left
-            c = max(0, c - 1)
-        elif action == 3:    # Right
-            c = min(self.grid_size - 1, c + 1)
-
-        self.state = (r, c)
-
-        reward = -1
-        done = False
-
-        if self.state in self.goals:
-            reward = 20
-            done = True
-
-        return self.state_to_index(self.state), reward, done, False, {}
-
-# ------------------------------------
-# Initialize Environment
-# ------------------------------------
-env = DeliveryDroneEnv()
-
-num_states = env.observation_space.n
-num_actions = env.action_space.n
+# Actions: Up, Down, Left, Right
+actions = [(-1,0), (1,0), (0,-1), (0,1)]
+action_names = ['U', 'D', 'L', 'R']
 
 gamma = 0.9
+theta = 0.001
 
-# Random Policy
-policy = np.random.randint(num_actions, size=num_states)
+# Initialize value function and random policy
+V = np.zeros((rows, cols))
+policy = np.zeros((rows, cols), dtype=int)
 
-# State Values
-V = np.zeros(num_states)
+def valid(x, y):
+    return 0 <= x < rows and 0 <= y < cols
 
-# ------------------------------------
+# -----------------------------
 # Policy Iteration
-# ------------------------------------
+# -----------------------------
 stable = False
 
 while not stable:
 
     # Policy Evaluation
     while True:
-
         delta = 0
+        for i in range(rows):
+            for j in range(cols):
 
-        for s in range(num_states):
+                if grid[i][j] == 'G':
+                    continue
 
-            env.state = env.index_to_state(s)
+                a = policy[i][j]
+                dx, dy = actions[a]
+                ni, nj = i + dx, j + dy
 
-            action = policy[s]
+                if not valid(ni, nj):
+                    ni, nj = i, j
 
-            next_state, reward, done, _, _ = env.step(action)
+                reward = rewards[grid[ni][nj]]
+                value = reward + gamma * V[ni][nj]
 
-            value = reward
+                delta = max(delta, abs(value - V[i][j]))
+                V[i][j] = value
 
-            if not done:
-                value += gamma * V[next_state]
-
-            delta = max(delta, abs(V[s] - value))
-            V[s] = value
-
-        if delta < 1e-4:
+        if delta < theta:
             break
 
     # Policy Improvement
     stable = True
 
-    for s in range(num_states):
+    for i in range(rows):
+        for j in range(cols):
 
-        old_action = policy[s]
+            if grid[i][j] == 'G':
+                continue
 
-        action_values = []
+            old_action = policy[i][j]
 
-        for a in range(num_actions):
+            best_action = old_action
+            best_value = -1e9
 
-            env.state = env.index_to_state(s)
+            for a, (dx, dy) in enumerate(actions):
+                ni, nj = i + dx, j + dy
 
-            next_state, reward, done, _, _ = env.step(a)
+                if not valid(ni, nj):
+                    ni, nj = i, j
 
-            value = reward
+                reward = rewards[grid[ni][nj]]
+                value = reward + gamma * V[ni][nj]
 
-            if not done:
-                value += gamma * V[next_state]
+                if value > best_value:
+                    best_value = value
+                    best_action = a
 
-            action_values.append(value)
+            policy[i][j] = best_action
 
-        policy[s] = np.argmax(action_values)
+            if best_action != old_action:
+                stable = False
 
-        if old_action != policy[s]:
-            stable = False
+# -----------------------------
+# Print Results
+# -----------------------------
+print('\\nValue Function:')
+for row in V:
+    print(['{:.2f}'.format(x) for x in row])
 
-# ------------------------------------
-# Print Optimal Policy
-# ------------------------------------
-symbols = ['↑', '↓', '←', '→']
-
-print("\nOptimal Policy:\n")
-
-for r in range(env.grid_size):
-
-    for c in range(env.grid_size):
-
-        if (r, c) in env.goals:
-            print(" G ", end=" ")
+print('\\nOptimal Policy:')
+for i in range(rows):
+    row = []
+    for j in range(cols):
+        if grid[i][j] == 'G':
+            row.append('G')
+        elif grid[i][j] == 'O':
+            row.append('X')
         else:
-            s = env.state_to_index((r, c))
-            print(symbols[policy[s]], end=" ")
-
-    print()
-
-# ------------------------------------
-# Display Value Function
-# ------------------------------------
-values = V.reshape((env.grid_size, env.grid_size))
-
-plt.imshow(values, cmap="viridis")
-plt.colorbar(label="State Value")
-plt.title("Optimal State Values")
-plt.show()
+            row.append(action_names[policy[i][j]])
+    print(row)
