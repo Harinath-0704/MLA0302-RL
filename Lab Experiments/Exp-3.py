@@ -1,157 +1,115 @@
-import gymnasium as gym
-from gymnasium import spaces
+import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import math
+from google.colab import files
 
-# ---------------------------------------
-# Dynamic Pricing Bandit Environment
-# ---------------------------------------
-class PricingBanditEnv(gym.Env):
+# -----------------------------
+# Upload CSV file
+# -----------------------------
+print('Upload the pricing_bandit_data.csv file')
+uploaded = files.upload()
 
-    def __init__(self):
-        super().__init__()
+# Read uploaded CSV
+file_name = list(uploaded.keys())[0]
+data = pd.read_csv(file_name)
 
-        # Five pricing strategies (arms)
-        self.prices = [100, 120, 140, 160, 180]
+prices = data['Price'].values
+probs = data['Success_Probability'].values
 
-        # Expected revenue probability
-        self.success_prob = [0.30, 0.45, 0.60, 0.40, 0.25]
+arms = len(prices)
+steps = 500
 
-        self.action_space = spaces.Discrete(len(self.prices))
-        self.observation_space = spaces.Discrete(1)
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        return 0, {}
-
-    def step(self, action):
-
-        if np.random.rand() < self.success_prob[action]:
-            reward = self.prices[action]
-        else:
-            reward = 0
-
-        terminated = False
-        truncated = False
-
-        return 0, reward, terminated, truncated, {}
-
-# ---------------------------------------
+# -----------------------------
 # Epsilon-Greedy
-# ---------------------------------------
-def epsilon_greedy(env, steps=500, epsilon=0.1):
-
-    Q = np.zeros(env.action_space.n)
-    N = np.zeros(env.action_space.n)
-    rewards = []
-
-    env.reset()
+# -----------------------------
+def epsilon_greedy(epsilon=0.1):
+    counts = np.zeros(arms)
+    values = np.zeros(arms)
+    revenue = 0
 
     for _ in range(steps):
-
         if np.random.rand() < epsilon:
-            action = env.action_space.sample()
+            arm = np.random.randint(arms)
         else:
-            action = np.argmax(Q)
+            arm = np.argmax(values)
 
-        _, reward, _, _, _ = env.step(action)
+        reward = prices[arm] if np.random.rand() < probs[arm] else 0
 
-        N[action] += 1
-        Q[action] += (reward - Q[action]) / N[action]
+        counts[arm] += 1
+        values[arm] += (reward - values[arm]) / counts[arm]
+        revenue += reward
 
-        rewards.append(reward)
+    return revenue
 
-    return np.cumsum(rewards)
+# -----------------------------
+# UCB (Upper Confidence Bound)
+# -----------------------------
+def ucb():
+    counts = np.zeros(arms)
+    values = np.zeros(arms)
+    revenue = 0
 
-# ---------------------------------------
-# UCB
-# ---------------------------------------
-def ucb(env, steps=500):
+    # Try each arm once
+    for arm in range(arms):
+        reward = prices[arm] if np.random.rand() < probs[arm] else 0
+        counts[arm] = 1
+        values[arm] = reward
+        revenue += reward
 
-    Q = np.zeros(env.action_space.n)
-    N = np.zeros(env.action_space.n)
-    rewards = []
+    for t in range(arms, steps):
+        ucb_values = values + np.sqrt((2 * np.log(t + 1)) / counts)
+        arm = np.argmax(ucb_values)
 
-    env.reset()
+        reward = prices[arm] if np.random.rand() < probs[arm] else 0
 
-    for t in range(steps):
+        counts[arm] += 1
+        values[arm] += (reward - values[arm]) / counts[arm]
+        revenue += reward
 
-        if t < env.action_space.n:
-            action = t
-        else:
-            ucb_values = Q + np.sqrt(2 * np.log(t + 1) / N)
-            action = np.argmax(ucb_values)
+    return revenue
 
-        _, reward, _, _, _ = env.step(action)
-
-        N[action] += 1
-        Q[action] += (reward - Q[action]) / N[action]
-
-        rewards.append(reward)
-
-    return np.cumsum(rewards)
-
-# ---------------------------------------
+# -----------------------------
 # Thompson Sampling
-# ---------------------------------------
-def thompson_sampling(env, steps=500):
-
-    alpha = np.ones(env.action_space.n)
-    beta = np.ones(env.action_space.n)
-
-    rewards = []
-
-    env.reset()
+# -----------------------------
+def thompson_sampling():
+    alpha = np.ones(arms)
+    beta = np.ones(arms)
+    revenue = 0
 
     for _ in range(steps):
-
         samples = np.random.beta(alpha, beta)
-        action = np.argmax(samples)
+        arm = np.argmax(samples)
 
-        _, reward, _, _, _ = env.step(action)
+        success = np.random.rand() < probs[arm]
+        reward = prices[arm] if success else 0
 
-        if reward > 0:
-            alpha[action] += 1
+        if success:
+            alpha[arm] += 1
         else:
-            beta[action] += 1
+            beta[arm] += 1
 
-        rewards.append(reward)
+        revenue += reward
 
-    return np.cumsum(rewards)
+    return revenue
 
-# ---------------------------------------
-# Main Program
-# ---------------------------------------
-env = PricingBanditEnv()
+# -----------------------------
+# Run all strategies
+# -----------------------------
+epsilon_revenue = epsilon_greedy()
+ucb_revenue = ucb()
+thompson_revenue = thompson_sampling()
 
-eps = epsilon_greedy(env)
-ucb_rewards = ucb(env)
-thompson = thompson_sampling(env)
+print('\\n===== Revenue Comparison =====')
+print('Epsilon-Greedy Revenue :', epsilon_revenue)
+print('UCB Revenue            :', ucb_revenue)
+print('Thompson Sampling      :', thompson_revenue)
 
-plt.figure(figsize=(8,5))
-plt.plot(eps, label="Epsilon-Greedy")
-plt.plot(ucb_rewards, label="UCB")
-plt.plot(thompson, label="Thompson Sampling")
+# Find best strategy
+revenues = {
+    'Epsilon-Greedy': epsilon_revenue,
+    'UCB': ucb_revenue,
+    'Thompson Sampling': thompson_revenue
+}
 
-plt.xlabel("Pricing Decisions")
-plt.ylabel("Cumulative Revenue")
-plt.title("Dynamic Pricing using Multi-Armed Bandit")
-plt.legend()
-plt.grid(True)
+best = max(revenues, key=revenues.get)
 
-plt.show()
-
-print("\nFinal Revenue")
-print("Epsilon-Greedy :", eps[-1])
-print("UCB            :", ucb_rewards[-1])
-print("Thompson       :", thompson[-1])
-
-best = max(
-    ("Epsilon-Greedy", eps[-1]),
-    ("UCB", ucb_rewards[-1]),
-    ("Thompson Sampling", thompson[-1]),
-    key=lambda x: x[1]
-)
-
-print("\nBest Strategy:", best[0])
+print('\\nBest Strategy:', best)
