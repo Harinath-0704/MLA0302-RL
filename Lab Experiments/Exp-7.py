@@ -1,3 +1,6 @@
+"""7) A delivery robot operates in a warehouse with predefined delivery points. Using Bellman
+equations, compute the state-value function for navigating to each delivery point.
+Implement this in Python and visualize the value function for different policies."""
 import numpy as np
 import matplotlib.pyplot as plt
 
