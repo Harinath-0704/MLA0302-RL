@@ -1,3 +1,7 @@
+"""2) A robot navigates a warehouse to pick and place items. Define states (locations in the
+warehouse), actions (move in four directions), and rewards (picking an item: +2, reaching
+the goal: +5, hitting an obstacle: -2). Implement a policy evaluation algorithm to determine
+the value function for a given policy in Python."""
 import pandas as pd
 from google.colab import files
 print('Upload the warehouse CSV file')
